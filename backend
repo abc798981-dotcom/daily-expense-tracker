@@ -1,0 +1,165 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import datetime
+import calendar
+from statsmodels.tsa.arima.model import ARIMA
+import warnings
+
+# Settings for cleaner Colab output
+warnings.filterwarnings("ignore")
+plt.style.use('fivethirtyeight')
+
+class AIExpenseManager:
+    def __init__(self, budget):
+        self.budget = budget
+        self.limit_threshold = budget * 0.85 # 85% Warning limit
+
+        # Main database for daily expenses
+        self.df = pd.DataFrame(columns=['Date', 'Category', 'Description', 'Amount'])
+
+        # Historical monthly data for ML training
+        data = {
+            'Month': pd.date_range(start='2025-01-01', periods=12, freq='ME'),
+            'Total_Spent': [1200, 1350, 1300, 1600, 1550, 1800, 1950, 1850, 2100, 2300, 2200, 2500]
+        }
+        self.history_df = pd.DataFrame(data).set_index('Month')
+
+    def add_expense(self, category, desc, amount):
+        """Adds a new expense to the current month's record"""
+        new_entry = {
+            'Date': datetime.date.today(),
+            'Category': category.title(),
+            'Description': desc,
+            'Amount': amount
+        }
+        self.df = pd.concat([self.df, pd.DataFrame([new_entry])], ignore_index=True)
+        print(f"✅ Logged: {desc} | ${amount} in {category}")
+
+    def suggest_daily_spending(self):
+        """Calculates daily allowance for the rest of the month"""
+        today = datetime.date.today()
+        last_day = calendar.monthrange(today.year, today.month)[1]
+        days_remaining = last_day - today.day + 1
+
+        total_spent = self.df['Amount'].sum()
+        remaining_money = self.budget - total_spent
+
+        if remaining_money <= 0:
+            print(f"\n⚠️ BUDGET EXHAUSTED: You have $0 remaining for the next {days_remaining} days.")
+            return 0
+
+        daily_limit = remaining_money / days_remaining
+        print(f"\n📅 MONTHLY PACE: You have {days_remaining} days left in the month.")
+        print(f"💡 SUGGESTION: Spend no more than ${daily_limit:.2f} per day to stay within salary.")
+        return daily_limit
+
+    def analyze_current_spending(self):
+        """Calculates totals, remaining balance, and proportions with Daily/Monthly breakdown"""
+        if self.df.empty:
+            print("No data available for the current month yet.")
+            return
+
+        total_spent = self.df['Amount'].sum()
+        remaining = self.budget - total_spent
+
+        # Daily Tracking Calculation
+        today_date = datetime.date.today()
+        daily_spent = self.df[self.df['Date'] == today_date]['Amount'].sum()
+
+        print("\n" + "="*50)
+        print(f"📊 TRACKING REPORT: {today_date}")
+        print("="*50)
+        print(f"TODAY'S TOTAL:    ${daily_spent:.2f}")
+        print(f"MONTHLY TOTAL:    ${total_spent:.2f}")
+        print(f"SALARY REMAINING: ${remaining:.2f}")
+
+        # Daily Suggestion
+        self.suggest_daily_spending()
+
+        # Proportion Analysis
+        summary = self.df.groupby('Category')['Amount'].sum()
+        highest_cat = summary.idxmax()
+
+        print(f"\nHIGHEST SPENDING CATEGORY: {highest_cat} (${summary.max():.2f})")
+
+        # Limit Indicator Logic
+        if total_spent > self.limit_threshold:
+            print(f"\n⚠️ LIMIT ALERT: You have used {(total_spent/self.budget)*100:.1f}% of your budget.")
+            print(f"🚨 STATUS: BEHIND LIMIT. You are overspending!")
+            print(f"💡 WAYS TO MANAGE: Cut down on '{highest_cat}' immediately. Delay non-essential 'Wants' until next month.")
+        else:
+            print(f"\n✅ STATUS: WITHIN LIMIT. Your monthly spending is healthy.")
+
+        # Visualization
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+        summary.plot(kind='pie', autopct='%1.1f%%', ax=ax1, title="Spending Proportions (Monthly)")
+        summary.plot(kind='bar', ax=ax2, color='teal', title="Expenses by Category")
+        plt.tight_layout()
+        plt.show()
+
+    def run_ai_forecast(self):
+        """Uses ARIMA to predict next month's spending based on history"""
+        print("\n" + "—"*50)
+        print("🤖 AI PREDICTIVE ANALYSIS (ARIMA)")
+
+        series = self.history_df['Total_Spent']
+        model = ARIMA(series, order=(1, 1, 1))
+        model_fit = model.fit()
+        forecast = model_fit.forecast(steps=1).iloc[0]
+
+        print(f"Predicted Spending for Next Month: ${forecast:.2f}")
+
+        # Saving Proportions Suggestion
+        print("\n🎯 SUGGESTED SAVING ALLOCATION (50/30/20 Rule):")
+        print(f"- Essentials (50%): ${self.budget * 0.5:.2f}")
+        print(f"- Wants (30%): ${self.budget * 0.3:.2f}")
+        print(f"- Savings/Debt (20%): ${self.budget * 0.2:.2f}")
+
+        if forecast > self.budget:
+            print(f"\n❗ RISK DETECTED: Forecast (${forecast:.2f}) exceeds Budget (${self.budget}).")
+            print("💡 ACTION: Review fixed costs and consider adjusting your 30% 'Wants' allocation.")
+
+        # Forecast Plot
+        plt.figure(figsize=(10, 4))
+        plt.plot(self.history_df.index, self.history_df['Total_Spent'], label='History', marker='o')
+        next_date = self.history_df.index[-1] + pd.DateOffset(months=1)
+        plt.scatter(next_date, forecast, color='red', label='AI Forecast', s=100)
+        plt.axhline(y=self.budget, color='gray', linestyle='--', label='Current Budget')
+        plt.title("Historical Trend & Next Month Prediction")
+        plt.legend()
+        plt.show()
+
+# --- INTERACTIVE EXECUTION IN COLAB ---
+
+# Pre-defined categories for better nature categorization
+categories = [
+    "1. Household (Rent/Bills)", "2. Food & Groceries", "3. Transport/Fuel",
+    "4. Health & Medical", "5. Entertainment/Fun", "6. Shopping",
+    "7. Education", "8. Personal Care", "9. Others"
+]
+
+try:
+    user_salary = float(input("Enter your Total Monthly Salary: "))
+    tracker = AIExpenseManager(budget=user_salary)
+
+    print("\nAvailable Categories:")
+    for cat in categories: print(cat)
+
+    # 2. Input Expenses Loop
+    print("\nEnter your expenses (type 'done' in Category to finish):")
+    while True:
+        cat_input = input("\nCategory (e.g., Food, Household): ")
+        if cat_input.lower() == 'done':
+            break
+        desc_input = input("Description: ")
+        amt_input = float(input("Amount: "))
+
+        tracker.add_expense(cat_input, desc_input, amt_input)
+
+    # 3. Generate Reports
+    tracker.analyze_current_spending()
+    tracker.run_ai_forecast()
+
+except ValueError:
+    print("Invalid input. Please enter numbers for Salary and Amount.")
